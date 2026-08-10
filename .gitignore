@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+mcp_server/.env
+dashboard/.env
+mcp_server/query_log.jsonl

@@ -1,0 +1,4 @@
+mcp==1.29.0
+requests>=2.31
+python-dotenv>=1.0
+databricks-sdk>=0.30
