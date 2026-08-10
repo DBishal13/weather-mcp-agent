@@ -1,22 +1,33 @@
-# Weather MCP Server + Agent Bricks Agent
+# Weather MCP Server + Agent
 
-Homework: *Build Your Own Weather-Prediction MCP Server + Agent* (Day 3 pattern:
-Agent Bricks + external MCP tool server, deployed as Databricks Apps).
+[![CI](https://github.com/DBishal13/weather-mcp-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/DBishal13/weather-mcp-agent/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+A weather-forecast [MCP](https://modelcontextprotocol.io) server (FastMCP, streamable-HTTP)
+and a tool-using agent built on top of it — current conditions, multi-day
+forecasts, and two "judgment" tools (umbrella / travel recommendations) that
+apply an explicit threshold to the raw forecast instead of just echoing it
+back. The MCP server is transport-agnostic: it's demonstrated here two ways —
+
+- **Locally**, driven by the Claude API directly (`demo/local_agent.py`) — no
+  cloud account needed, just an Anthropic API key.
+- **Deployed as a Databricks App**, driven by a Databricks Agent Bricks agent
+  registered against it as an external MCP tool.
 
 ## Architecture
 
 ```
                      ┌─────────────────────────────┐
-  natural language   │   Databricks Agent Bricks    │
-  question  ───────► │   agent (system prompt +     │
-                      │   external MCP tool config)  │
+  natural language   │   Agent (Claude API tool-use │
+  question  ───────► │   loop, or Databricks Agent  │
+                      │   Bricks + external MCP)     │
                      └──────────────┬────────────────┘
                                     │ MCP tool calls (streamable-HTTP)
                                     ▼
                      ┌─────────────────────────────┐
                      │  mcp_server/                 │
                      │  weather_mcp_server.py       │  Databricks App #1
-                     │  (FastMCP, @mcp.tool funcs)  │
+                     │  (FastMCP, @mcp.tool funcs)  │  or a local process
                      └──────────────┬────────────────┘
                                     │ calls (no raw requests here)
                                     ▼
@@ -34,34 +45,11 @@ Agent Bricks + external MCP tool server, deployed as Databricks Apps).
                      └─────────────────────────────┘
 ```
 
-`weather_mcp_server.py` mirrors `mcp_server/alpaca_mcp_server.py` from the Day 3
-reference: tool functions are thin wrappers that call into an adapter module and
-shape the result. `weather_broker.py` mirrors `alpaca_broker.py`: it owns every
-`requests` call and all response parsing, so no `@mcp.tool` function talks to an
-HTTP API directly.
-
-## Weather API + auth
-
-- **Primary: [Open-Meteo](https://open-meteo.com)** — no signup, no API key,
-  ~10k calls/day non-commercial. Used for geocoding, current conditions, and
-  daily forecasts. Chosen per the assignment's recommendation to build the
-  whole pipeline before touching secrets management.
-- **Stretch: [NWS](https://api.weather.gov)** — no key either, but US-only.
-  Used only for `get_weather_alerts`. Requires a courtesy `User-Agent` header
-  (contact info), read from the `NWS_USER_AGENT` env var — not a secret, just
-  set as a plain value in `mcp_server/app.yaml`.
-- **No secrets are required for this build.** If you swap in a keyed API
-  (e.g. WeatherAPI.com) later, `weather_mcp_server.py` already has a `_secret()`
-  helper following the `alpaca_broker.py` pattern
-  (`WorkspaceClient().secrets.get_secret(scope, key)`) — store the key with
-  `databricks secrets put-secret <scope> <key>` and reference it from
-  `app.yaml` via `valueFrom`, never hardcode it.
-
-This repo reuses the geocode → NWS grid-point → alerts lookup shape from the
-sibling homework at `D:\DBX\weather-lakebase-app\weather_client.py` (that
-project syncs the same NWS data into a Lakebase/pgvector store for semantic
-search — a different exercise, but the NWS client logic transfers directly to
-the `get_weather_alerts` stretch tool here).
+`weather_mcp_server.py` keeps `@mcp.tool` functions thin: parse args, call
+into `weather_broker.py`, shape the result, log it. `weather_broker.py` owns
+every `requests` call and all response parsing — no tool function talks to an
+HTTP API directly, which is what makes `mcp_server/tests/test_weather_broker.py`
+possible without a network connection (everything mocks `requests.get`).
 
 ## Tools exposed by `mcp_server/weather_mcp_server.py`
 
@@ -77,9 +65,24 @@ the `get_weather_alerts` stretch tool here).
 All tools catch `WeatherAPIError` and return `{"error": "<message>"}` — the
 agent never sees a raw stack trace.
 
+## Weather API + auth
+
+- **Primary: [Open-Meteo](https://open-meteo.com)** — no signup, no API key,
+  ~10k calls/day non-commercial. Used for geocoding, current conditions, and
+  daily forecasts.
+- **Stretch: [NWS](https://api.weather.gov)** — no key either, but US-only.
+  Used only for `get_weather_alerts`. Requires a courtesy `User-Agent` header
+  (contact info), read from the `NWS_USER_AGENT` env var — not a secret, just
+  set as a plain value in `mcp_server/app.yaml`.
+- **No secrets are required for this build.** If you swap in a keyed API
+  (e.g. WeatherAPI.com) later, `weather_mcp_server.py` already has a `_secret()`
+  helper (`WorkspaceClient().secrets.get_secret(scope, key)`) — store the key
+  with `databricks secrets put-secret <scope> <key>` and reference it from
+  `app.yaml` via `valueFrom`, never hardcode it.
+
 ## Setup
 
-### 1. MCP server — local run
+### 1. Run the MCP server locally
 
 ```bash
 cd mcp_server
@@ -91,7 +94,45 @@ python weather_mcp_server.py
 
 Server listens on `http://0.0.0.0:8000/mcp` (streamable-HTTP transport).
 
-### 2. Deploy as a Databricks App
+### 2. See it work — local demo (no Databricks account needed)
+
+With the server running from step 1, in a second terminal:
+
+```bash
+pip install -r demo/requirements.txt
+export ANTHROPIC_API_KEY=sk-ant-...        # or: ant auth login
+python demo/local_agent.py
+```
+
+This spins up a real Claude tool-use loop against the running MCP server and
+runs four demo questions end to end (tool calls, results, and final answers
+all printed). Pass your own question instead of the built-in set:
+
+```bash
+python demo/local_agent.py "Will it snow in Denver tomorrow?"
+```
+
+### 3. Or run everything in Docker
+
+```bash
+docker compose up --build
+```
+
+Starts the MCP server on `:8000` and the optional dashboard on `:8001`,
+sharing a Docker volume for the query log.
+
+### 4. Tests
+
+```bash
+pip install -r mcp_server/requirements.txt pytest
+pytest
+```
+
+`mcp_server/tests/` unit-tests `weather_broker.py` (all HTTP mocked, no
+network calls) and `query_log.py`. Runs on every push via
+[GitHub Actions](.github/workflows/ci.yml).
+
+### 5. Deploy as a Databricks App
 
 ```bash
 databricks auth login --host <your-workspace-url>          # one-time
@@ -113,16 +154,15 @@ databricks apps deploy weather-dashboard \
 Grab the deployed app's URL (`databricks apps get weather-mcp-server`) — you'll
 need it to register the external MCP tool in the next step.
 
-### 3. Register the MCP server as an external MCP tool
+### 6. Register the MCP server as an external MCP tool
 
 In the Databricks workspace UI: **Agents → Agent Bricks → (your agent) → Tools
 → Add tool → External MCP server**, and point it at the deployed app's
-`/mcp` endpoint URL from step 2. This is the same flow as Day 3's
-"Register the MCP server as an external MCP" step.
+`/mcp` endpoint URL from step 5.
 
-### 4. Build the Agent Bricks agent
+### 7. Build the Agent Bricks agent
 
-Create a new Agent Bricks agent, attach the external MCP server from step 3,
+Create a new Agent Bricks agent, attach the external MCP server from step 6,
 and set the system prompt below.
 
 ## Agent system prompt
@@ -160,25 +200,42 @@ Rules:
   meteorology report generator.
 ```
 
+This is the exact prompt used both by `demo/local_agent.py` and the
+Databricks Agent Bricks agent — same tool contract, same guardrails,
+regardless of which runtime is driving it.
+
 ## Demonstration
 
-_Paste 3+ example Q&A transcripts (with tool calls shown) from the deployed
-Agent Bricks agent here once it's registered, e.g.:_
+Run `python demo/local_agent.py` for a live, real transcript against four
+questions (tool calls, arguments, and results all printed) — the fastest way
+to see this working without any cloud setup. Sample of what it produces:
 
 1. **"Will it rain in Chicago tomorrow?"** → agent calls
    `predict_umbrella_needed(location="Chicago, IL", date="<tomorrow>")` → answer.
-2. **"Should I bring a jacket to Austin this weekend?"** → agent calls
-   `get_travel_recommendation(location="Austin, TX", date="<Saturday>")` → answer.
+2. **"Should I bring a jacket to Austin, TX today?"** → agent calls
+   `get_travel_recommendation(location="Austin, TX")` → answer.
 3. **"Compare the weather in Seattle and Miami right now."** → agent calls
    `compare_weather(locations=["Seattle, WA", "Miami, FL"])` → answer.
-4. *(stretch)* **"Any severe weather alerts for Oklahoma City?"** → agent calls
-   `get_weather_alerts(location="Oklahoma City, OK")` → answer.
+4. *(stretch)* **"Are there any severe weather alerts for Oklahoma City?"** →
+   agent calls `get_weather_alerts(location="Oklahoma City, OK")` → answer.
+
+_Paste the actual transcript (or a screenshot from the deployed Agent Bricks
+agent) here once you've run it._
 
 ## Notes / limitations
 
 - No secrets are committed; `.env` is git-ignored, only `.env.example` is checked in.
 - The optional dashboard logs to a local JSONL file per container — fine for a
-  single-instance demo, not for a scaled deployment (see `dashboard/app.py`
-  docstring for how to swap in the Lakebase store from the sibling project instead).
+  single-instance demo, not for a scaled deployment. For that, swap
+  `query_log.py`'s file-backed `record()`/`recent()` for a real store (e.g. a
+  Postgres table) so the dashboard can read from the same database the MCP
+  server writes to, instead of a local file.
 - Geocoding picks the top Open-Meteo match for ambiguous names (e.g. "Springfield");
   the resolved location name is always echoed back in tool output so mistakes are visible.
+- `mcp_server/Dockerfile` and `dashboard/Dockerfile` build from the repo root
+  (`docker compose up --build` handles this) since the dashboard imports
+  `mcp_server/query_log.py`.
+
+## License
+
+[MIT](LICENSE)

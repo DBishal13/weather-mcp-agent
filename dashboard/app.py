@@ -1,10 +1,10 @@
-"""Optional stretch dashboard: shows recent MCP tool calls (query/prediction) from the log
-written by mcp_server/query_log.py. Not required for a passing grade - see README.
+"""Optional dashboard: shows recent MCP tool calls (query/prediction) from the log
+written by mcp_server/query_log.py. See the README for setup.
 
-For a real multi-container deployment, point QUERY_LOG_PATH at a shared location or,
-better, swap query_log.py to write into the Lakebase Postgres instance already set up in
-the sibling weather-lakebase-app (see its lakebase.py) so this dashboard can read from
-the same database instead of a local file.
+For a real multi-container deployment, point QUERY_LOG_PATH at a shared location,
+or swap query_log.py's file-backed record()/recent() for a real database (e.g. a
+Postgres table) so this dashboard can read from the same store the MCP server
+writes to instead of a local file.
 """
 import os
 import sys

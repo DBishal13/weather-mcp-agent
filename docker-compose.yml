@@ -1,0 +1,28 @@
+services:
+  mcp-server:
+    build:
+      context: .
+      dockerfile: mcp_server/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - NWS_USER_AGENT=weather-mcp-agent (contact: set-your-email@example.com)
+      - QUERY_LOG_PATH=/data/query_log.jsonl
+    volumes:
+      - query-log:/data
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: dashboard/Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      - QUERY_LOG_PATH=/data/query_log.jsonl
+    volumes:
+      - query-log:/data
+    depends_on:
+      - mcp-server
+
+volumes:
+  query-log:

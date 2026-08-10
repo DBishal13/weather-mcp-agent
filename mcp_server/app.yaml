@@ -4,7 +4,7 @@ command: ["python", "weather_mcp_server.py"]
 
 env:
   - name: "NWS_USER_AGENT"
-    value: "weather-mcp-homework (contact: beesal13dh@gmail.com)"
+    value: "weather-mcp-agent (contact: beesal13dh@gmail.com)"
   # No API key needed for Open-Meteo. If you swap in a keyed weather API later,
   # add it as a Databricks secret and reference it here, e.g.:
   # - name: "WEATHER_API_KEY"

@@ -1,8 +1,7 @@
-"""Weather-forecast MCP server (FastMCP, streamable-HTTP) for the Agent Bricks homework.
+"""Weather-forecast MCP server (FastMCP, streamable-HTTP).
 
-Mirrors the shape of mcp_server/alpaca_mcp_server.py from the Day 3 reference
-app: tool functions here stay thin (parse args, call weather_broker.py, shape
-the response, log it) - all HTTP calls and response parsing live in
+Tool functions here stay thin: parse args, call weather_broker.py, shape
+the response, log it. All HTTP calls and response parsing live in
 weather_broker.py, and secrets (none required for Open-Meteo; NWS_USER_AGENT
 is not sensitive) would go through Databricks secrets via the _secret() helper
 below if a future data source needed a real API key.
@@ -21,7 +20,7 @@ from query_log import record
 
 
 def _secret(scope, key, env_fallback=None):
-    """Databricks-secret lookup pattern (mirrors mcp_server/alpaca_broker.py's _secret()).
+    """Databricks-secret lookup helper.
 
     Not currently needed - Open-Meteo requires no key - but kept here so adding
     a stretch data source that *does* need a key (e.g. WeatherAPI.com) is a

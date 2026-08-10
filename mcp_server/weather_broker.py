@@ -2,10 +2,8 @@
 
 Open-Meteo (https://open-meteo.com) is the primary source for current conditions
 and forecasts - global coverage, no signup, no API key. NWS (api.weather.gov) is
-used only for the US-only severe-weather-alerts stretch tool; that geocode ->
-grid-point -> alerts shape is adapted from the sibling homework at
-D:\\DBX\\weather-lakebase-app\\weather_client.py, which does the same lookup to
-sync NWS alerts/forecasts into Lakebase for semantic search.
+used only for the US-only severe-weather-alerts stretch tool, via the standard
+geocode -> grid-point -> alerts lookup NWS's API expects.
 
 weather_mcp_server.py's @mcp.tool functions stay thin: they call functions here
 and shape the result into a dict. No `requests` calls belong in the tool layer.
@@ -21,7 +19,7 @@ NWS_BASE_URL = "https://api.weather.gov"
 
 
 def _user_agent():
-    return os.environ.get("NWS_USER_AGENT", "weather-mcp-homework (contact: unknown@example.com)")
+    return os.environ.get("NWS_USER_AGENT", "weather-mcp-agent (contact: unknown@example.com)")
 
 
 class WeatherAPIError(Exception):
@@ -181,8 +179,6 @@ def find_forecast_day(forecast_days, target_date):
 
 
 # ---- NWS severe weather alerts (US-only stretch tool) ----
-# Adapted from the geocode -> grid-point -> alerts shape in
-# D:\DBX\weather-lakebase-app\weather_client.py (resolve_grid_point / fetch_active_alerts).
 
 def _nws_get(url, params=None, timeout=15):
     try:

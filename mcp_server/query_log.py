@@ -1,11 +1,10 @@
 """Tiny append-only JSONL log of tool calls, read by the optional dashboard app.
 
-Not a substitute for a real store like the Lakebase (Postgres) setup in the
-sibling weather-lakebase-app - if this MCP server needs to survive restarts or
-be read by a dashboard running in a separate Databricks App container, point
-LOG_PATH at a shared volume or swap this for a Lakebase table using that
-project's lakebase.py connection pattern. For a single-container demo, a local
-file is enough.
+Not a substitute for a real store like Postgres - if this MCP server needs to
+survive restarts or be read by a dashboard running in a separate Databricks
+App container, point LOG_PATH at a shared volume (see docker-compose.yml) or
+swap this for a database table. For a single-container demo, a local file is
+enough.
 """
 import json
 import os
