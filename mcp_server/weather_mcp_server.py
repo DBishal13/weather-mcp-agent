@@ -7,8 +7,9 @@ is not sensitive) would go through Databricks secrets via the _secret() helper
 below if a future data source needed a real API key.
 
 Run locally:  python weather_mcp_server.py
-Deployed as a Databricks App, app.yaml points the app runtime at this file and
-DATABRICKS_APP_PORT supplies the port to bind.
+Also deployable as a Databricks App (see the `databricks` branch for the
+app.yaml manifest + Agent Bricks setup) - DATABRICKS_APP_PORT is honored as
+a fallback for the bind port if present, PORT otherwise.
 """
 import os
 

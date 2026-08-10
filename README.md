@@ -7,27 +7,33 @@ A weather-forecast [MCP](https://modelcontextprotocol.io) server (FastMCP, strea
 and a tool-using agent built on top of it — current conditions, multi-day
 forecasts, and two "judgment" tools (umbrella / travel recommendations) that
 apply an explicit threshold to the raw forecast instead of just echoing it
-back. The MCP server is transport-agnostic: it's demonstrated here two ways —
+back. The MCP server itself is just a Python process; this branch runs it
+locally or in Docker and drives it with two interchangeable agent runtimes:
 
-- **Locally**, driven by the Claude API directly (`demo/local_agent.py`) — no
-  cloud account needed, just an Anthropic API key.
-- **Deployed as a Databricks App**, driven by a Databricks Agent Bricks agent
-  registered against it as an external MCP tool.
+- **Claude API** (`demo/local_agent.py`) — the more capable option, needs an
+  Anthropic API key.
+- **A free, fully-local model via [Ollama](https://ollama.com)** (`demo/local_agent_ollama.py`)
+  — zero cost, zero API key, everything runs on your machine.
+
+> Looking for the Databricks Apps + Agent Bricks deployment path (the
+> original version of this project)? See the [`databricks`](https://github.com/DBishal13/weather-mcp-agent/tree/databricks)
+> branch — same MCP server, plus `app.yaml` manifests and the steps to
+> register it as an external MCP tool for a Databricks Agent Bricks agent.
 
 ## Architecture
 
 ```
                      ┌─────────────────────────────┐
-  natural language   │   Agent (Claude API tool-use │
-  question  ───────► │   loop, or Databricks Agent  │
-                      │   Bricks + external MCP)     │
+  natural language   │   Agent (Claude API or a     │
+  question  ───────► │   local Ollama model,        │
+                      │   tool-use loop)             │
                      └──────────────┬────────────────┘
                                     │ MCP tool calls (streamable-HTTP)
                                     ▼
                      ┌─────────────────────────────┐
                      │  mcp_server/                 │
-                     │  weather_mcp_server.py       │  Databricks App #1
-                     │  (FastMCP, @mcp.tool funcs)  │  or a local process
+                     │  weather_mcp_server.py       │  local process, Docker,
+                     │  (FastMCP, @mcp.tool funcs)  │  or any Python host
                      └──────────────┬────────────────┘
                                     │ calls (no raw requests here)
                                     ▼
@@ -40,7 +46,7 @@ back. The MCP server is transport-agnostic: it's demonstrated here two ways —
                  (current + forecast)   (US-only alerts, stretch)
 
                      ┌─────────────────────────────┐
-                     │  dashboard/app.py (optional) │  Databricks App #2
+                     │  dashboard/app.py (optional) │
                      │  reads mcp_server/query_log  │
                      └─────────────────────────────┘
 ```
@@ -72,13 +78,12 @@ agent never sees a raw stack trace.
   daily forecasts.
 - **Stretch: [NWS](https://api.weather.gov)** — no key either, but US-only.
   Used only for `get_weather_alerts`. Requires a courtesy `User-Agent` header
-  (contact info), read from the `NWS_USER_AGENT` env var — not a secret, just
-  set as a plain value in `mcp_server/app.yaml`.
+  (contact info), read from the `NWS_USER_AGENT` env var (see `.env.example`)
+  — not a secret, just contact info.
 - **No secrets are required for this build.** If you swap in a keyed API
   (e.g. WeatherAPI.com) later, `weather_mcp_server.py` already has a `_secret()`
-  helper (`WorkspaceClient().secrets.get_secret(scope, key)`) — store the key
-  with `databricks secrets put-secret <scope> <key>` and reference it from
-  `app.yaml` via `valueFrom`, never hardcode it.
+  helper as a starting point for wiring up whatever secret store you deploy
+  behind — never hardcode a key.
 
 ## Setup
 
@@ -94,9 +99,19 @@ python weather_mcp_server.py
 
 Server listens on `http://0.0.0.0:8000/mcp` (streamable-HTTP transport).
 
-### 2. See it work — local demo (no Databricks account needed)
+### 2. See it work — pick an agent runtime
 
-With the server running from step 1, in a second terminal:
+With the server running from step 1, in a second terminal, either:
+
+**Free, fully local (Ollama)** — no API key, no cost:
+
+```bash
+ollama pull llama3.1          # once; any tool-calling-capable model works
+pip install -r demo/requirements.txt
+python demo/local_agent_ollama.py
+```
+
+**Or Claude API** — more capable tool selection and reasoning:
 
 ```bash
 pip install -r demo/requirements.txt
@@ -104,12 +119,13 @@ export ANTHROPIC_API_KEY=sk-ant-...        # or: ant auth login
 python demo/local_agent.py
 ```
 
-This spins up a real Claude tool-use loop against the running MCP server and
-runs four demo questions end to end (tool calls, results, and final answers
-all printed). Pass your own question instead of the built-in set:
+Both spin up a real tool-use loop against the running MCP server and print
+the full transcript (tool calls, arguments, results, final answer). Pass your
+own question instead of the built-in set:
 
 ```bash
 python demo/local_agent.py "Will it snow in Denver tomorrow?"
+python demo/local_agent_ollama.py "Will it snow in Denver tomorrow?"
 ```
 
 ### 3. Or run everything in Docker
@@ -132,38 +148,13 @@ pytest
 network calls) and `query_log.py`. Runs on every push via
 [GitHub Actions](.github/workflows/ci.yml).
 
-### 5. Deploy as a Databricks App
+### 5. Deploying elsewhere
 
-```bash
-databricks auth login --host <your-workspace-url>          # one-time
-databricks apps create weather-mcp-server
-databricks sync mcp_server /Workspace/Users/<you>/weather-mcp-server
-databricks apps deploy weather-mcp-server \
-  --source-code-path /Workspace/Users/<you>/weather-mcp-server
-```
-
-(Optional stretch dashboard, same pattern against `dashboard/`:)
-
-```bash
-databricks apps create weather-dashboard
-databricks sync dashboard /Workspace/Users/<you>/weather-dashboard
-databricks apps deploy weather-dashboard \
-  --source-code-path /Workspace/Users/<you>/weather-dashboard
-```
-
-Grab the deployed app's URL (`databricks apps get weather-mcp-server`) — you'll
-need it to register the external MCP tool in the next step.
-
-### 6. Register the MCP server as an external MCP tool
-
-In the Databricks workspace UI: **Agents → Agent Bricks → (your agent) → Tools
-→ Add tool → External MCP server**, and point it at the deployed app's
-`/mcp` endpoint URL from step 5.
-
-### 7. Build the Agent Bricks agent
-
-Create a new Agent Bricks agent, attach the external MCP server from step 6,
-and set the system prompt below.
+The MCP server is a plain FastMCP process (`python weather_mcp_server.py`,
+binds `PORT`/`0.0.0.0`) — deploy it anywhere that runs Python, point any
+MCP-compatible agent at its `/mcp` endpoint. For the specific Databricks Apps
++ Agent Bricks path (this project's original deployment target), see the
+[`databricks`](https://github.com/DBishal13/weather-mcp-agent/tree/databricks) branch.
 
 ## Agent system prompt
 
@@ -200,15 +191,59 @@ Rules:
   meteorology report generator.
 ```
 
-This is the exact prompt used both by `demo/local_agent.py` and the
-Databricks Agent Bricks agent — same tool contract, same guardrails,
-regardless of which runtime is driving it.
+This is the exact prompt used by both `demo/local_agent.py` and
+`demo/local_agent_ollama.py` — same tool contract, same guardrails,
+regardless of which model is driving it. (The `databricks` branch's Agent
+Bricks agent uses the identical prompt too.)
 
 ## Demonstration
 
-Run `python demo/local_agent.py` for a live, real transcript against four
-questions (tool calls, arguments, and results all printed) — the fastest way
-to see this working without any cloud setup. Sample of what it produces:
+Run either demo script for a live, real transcript (tool calls, arguments,
+and results all printed) — the fastest way to see this working. Two runs
+against a locally-running server, captured verbatim:
+
+**`python demo/local_agent_ollama.py "What's the weather like in Chicago right now?"`**
+(free, `llama3.1:8b`, CPU inference):
+
+```
+[tool_call] get_current_weather({"location": "Chicago"})
+[tool_result] {
+  "resolved_location": "Chicago, Illinois, United States",
+  "observed_at": "2026-08-10T15:45",
+  "temperature_f": 77.2,
+  "feels_like_f": 85.2,
+  "humidity_pct": 92,
+  "wind_mph": 6.3,
+  "wind_direction_deg": 48,
+  "precipitation_in": 0.0,
+  "conditions": "Clear sky"
+}
+
+[assistant] The current weather in Chicago is clear skies with a temperature
+of 77°F, feeling like 85°F due to the humidity. The wind is blowing at about
+6 mph from the northeast, and there's no precipitation currently.
+```
+
+**`python demo/local_agent_ollama.py "Should I bring an umbrella in Seattle today?"`**
+— the smaller local model guessed a stale training-era date instead of
+"today"; the tool correctly rejected it as outside the forecast window, and
+the agent surfaced that instead of guessing an answer (exactly the guardrail
+the system prompt asks for):
+
+```
+[tool_call] predict_umbrella_needed({"date": "2023-12-01", "location": "Seattle"})
+[tool_result] {
+  "error": "No forecast available for 'Seattle' on '2023-12-01' (forecast window is the next 10 days)."
+}
+
+[assistant] I'm having trouble getting a weather report for Seattle. Could
+you please clarify or try again? I'll do my best to help once we get a
+valid location and date.
+```
+
+The Claude-driven `demo/local_agent.py` script runs the same four questions
+end to end (tool selection, arguments, and final answer) with noticeably more
+reliable argument handling — worth running if you have an Anthropic API key:
 
 1. **"Will it rain in Chicago tomorrow?"** → agent calls
    `predict_umbrella_needed(location="Chicago, IL", date="<tomorrow>")` → answer.
@@ -219,8 +254,7 @@ to see this working without any cloud setup. Sample of what it produces:
 4. *(stretch)* **"Are there any severe weather alerts for Oklahoma City?"** →
    agent calls `get_weather_alerts(location="Oklahoma City, OK")` → answer.
 
-_Paste the actual transcript (or a screenshot from the deployed Agent Bricks
-agent) here once you've run it._
+_Paste the actual Claude-driven transcript here once you've run it._
 
 ## Notes / limitations
 
@@ -235,6 +269,11 @@ agent) here once you've run it._
 - `mcp_server/Dockerfile` and `dashboard/Dockerfile` build from the repo root
   (`docker compose up --build` handles this) since the dashboard imports
   `mcp_server/query_log.py`.
+- `demo/local_agent_ollama.py` trades reliability for cost: small local
+  models are noticeably worse than Claude at tool selection and argument
+  formatting (see the umbrella example above). It's a good free sanity check
+  that the MCP server works end to end, not a substitute for the Claude- or
+  Agent Bricks-driven demonstration.
 
 ## License
 

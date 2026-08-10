@@ -1,3 +1,0 @@
-# Optional stretch dashboard app.
-# Deploy with: databricks apps deploy weather-dashboard --source-code-path dashboard
-command: ["python", "app.py"]
